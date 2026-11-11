@@ -5,7 +5,7 @@
  *   1. Optimal fiber wiring (minimum spanning tree).
  *   2. Shortest delivery route visiting every neighborhood (TSP).
  *   3. Maximum data flow from the first to the last neighborhood.
- *   4. Polygons per exchange (not implemented yet).
+ *   4. Voronoi polygon of each exchange (closest-exchange regions).
  *
  * Authors: <NAME_1> (<STUDENT_ID_1>), <NAME_2> (<STUDENT_ID_2>), <NAME_3> (<STUDENT_ID_3>)
  * Date: 2026-11-10
@@ -19,6 +19,8 @@
 
 typedef std::vector<std::vector<int>> Matrix;
 typedef std::vector<std::pair<int, int>> Coords;
+typedef std::pair<double, double> Point;
+typedef std::vector<Point> Polygon;
 
 // Large value that can still be added to a cost without overflowing an int.
 const int INF_COST = INT_MAX / 2;
@@ -198,6 +200,98 @@ int maxFlow(int vertices, Matrix& flowMatrix) {
 	return totalFlow;
 }
 
+// Tells on which side of the perpendicular bisector of a and b a point lies.
+// p: point to test.
+// a: first exchange.
+// b: second exchange.
+// Returns a value <= 0 when p is at least as close to a as to b.
+double bisectorSide(const Point& p, const Point& a, const Point& b) {
+	return 2 * (b.first - a.first) * p.first
+		+ 2 * (b.second - a.second) * p.second
+		- (b.first * b.first + b.second * b.second
+		- a.first * a.first - a.second * a.second);
+}
+
+// Clips a convex polygon, keeping only the area closer to a than to b
+// (Sutherland-Hodgman against one half-plane).
+// polygon: convex polygon to clip.
+// a: exchange whose side is kept.
+// b: exchange whose side is discarded.
+// Returns the clipped polygon, empty if nothing remains.
+Polygon clipPolygon(const Polygon& polygon, const Point& a, const Point& b) {
+	const double EPSILON = 1e-9;
+	Polygon result;
+
+	if (!polygon.empty()) {
+		Point prev = polygon.back();
+		double prevValue = bisectorSide(prev, a, b);
+
+		for (const Point& curr : polygon) {
+			double currValue = bisectorSide(curr, a, b);
+			bool prevInside = prevValue <= EPSILON;
+			bool currInside = currValue <= EPSILON;
+
+			// The edge crosses the bisector, so add the crossing point.
+			if (prevInside != currInside) {
+				double t = prevValue / (prevValue - currValue);
+				result.push_back({prev.first + t * (curr.first - prev.first),
+					prev.second + t * (curr.second - prev.second)});
+			}
+			if (currInside) {
+				result.push_back(curr);
+			}
+			prev = curr;
+			prevValue = currValue;
+		}
+	}
+	return result;
+}
+
+// Builds the bounding rectangle that stands in for the unbounded cells.
+// points: exchange locations.
+// Returns the rectangle, larger than the points by ten times their spread.
+Polygon boundingBox(const std::vector<Point>& points) {
+	double minX = points[0].first;
+	double maxX = points[0].first;
+	double minY = points[0].second;
+	double maxY = points[0].second;
+
+	for (const Point& p : points) {
+		minX = std::min(minX, p.first);
+		maxX = std::max(maxX, p.first);
+		minY = std::min(minY, p.second);
+		maxY = std::max(maxY, p.second);
+	}
+
+	double margin = std::max({maxX - minX, maxY - minY, 1.0}) * 10.0;
+	return {{minX - margin, minY - margin}, {maxX + margin, minY - margin},
+		{maxX + margin, maxY + margin}, {minX - margin, maxY + margin}};
+}
+
+// Builds the Voronoi cell of every exchange by clipping the bounding box
+// against the bisector with each other exchange. O(n^2 * n).
+// sites: exchange coordinates.
+// Returns one polygon per exchange, in input order.
+std::vector<Polygon> voronoi(const Coords& sites) {
+	std::vector<Point> points;
+	std::vector<Polygon> polygons;
+
+	for (const auto& [x, y] : sites) {
+		points.push_back({double(x), double(y)});
+	}
+
+	for (unsigned int i = 0; i < points.size(); i++) {
+		Polygon cell = boundingBox(points);
+		for (unsigned int j = 0; j < points.size(); j++) {
+			if (i != j) {
+				cell = clipPolygon(cell, points[i], points[j]);
+			}
+		}
+		polygons.push_back(cell);
+	}
+	return polygons;
+}
+
 // Reads a square matrix of size n x n from standard input.
 // n: matrix dimension.
 // Returns the matrix read.
@@ -226,7 +320,7 @@ Coords readPoints(int n) {
 // Prints output 1: the fiber wiring arcs, named A, B, C...
 // edges: arcs of the minimum spanning tree.
 void printWiring(const std::vector<std::pair<int, int>>& edges) {
-	std::cout << "1. Cableado:" << std::endl;
+	std::cout << "1. Wiring:" << std::endl;
 	for (const auto& [a, b] : edges) {
 		std::cout << "(" << char('A' + a) << "," << char('A' + b) << ")" << std::endl;
 	}
@@ -236,7 +330,7 @@ void printWiring(const std::vector<std::pair<int, int>>& edges) {
 // Prints output 2: the delivery route as city letters.
 // route: order of visit, starting and ending at the same city.
 void printRoute(const std::vector<int>& route) {
-	std::cout << "2. Ruta:" << std::endl;
+	std::cout << "2. Route:" << std::endl;
 	for (size_t k = 0; k < route.size(); k++) {
 		std::cout << char('A' + route[k]);
 		if (k + 1 < route.size()) {
@@ -244,6 +338,19 @@ void printRoute(const std::vector<int>& route) {
 		}
 	}
 	std::cout << std::endl << std::endl;
+}
+
+// Prints output 4: one polygon per exchange.
+// polygons: Voronoi cells in the same order as the exchanges.
+void printPolygons(const std::vector<Polygon>& polygons) {
+	std::cout << "4. Polygons:" << std::endl;
+	for (unsigned int i = 0; i < polygons.size(); i++) {
+		std::cout << char('A' + i) << ": ";
+		for (const Point& p : polygons[i]) {
+			std::cout << "(" << p.first << "," << p.second << ") ";
+		}
+		std::cout << std::endl;
+	}
 }
 
 int main() {
@@ -255,7 +362,6 @@ int main() {
 
 	Matrix distanceMatrix = readMatrix(n);
 	Matrix capacityMatrix = readMatrix(n);
-	// Read now so the input is fully consumed; used by part 4 once implemented.
 	Coords exchanges = readPoints(n);
 
 	std::vector<std::pair<int, int>> edges;
@@ -266,8 +372,10 @@ int main() {
 	tsp(distanceMatrix, route);
 	printRoute(route);
 
-	std::cout << "3. Flujo maximo:" << std::endl;
-	std::cout << maxFlow(n, capacityMatrix) << std::endl;
+	std::cout << "3. Maximum flow:" << std::endl;
+	std::cout << maxFlow(n, capacityMatrix) << std::endl << std::endl;
+
+	printPolygons(voronoi(exchanges));
 
 	return 0;
 }
