@@ -1,267 +1,273 @@
+/*
+ * Integrated Activity 2: network planning for an Internet service company.
+ * Reads a distance matrix, a capacity matrix and the coordinates of the
+ * exchanges, and computes:
+ *   1. Optimal fiber wiring (minimum spanning tree).
+ *   2. Shortest delivery route visiting every neighborhood (TSP).
+ *   3. Maximum data flow from the first to the last neighborhood.
+ *   4. Polygons per exchange (not implemented yet).
+ *
+ * Authors: <NAME_1> (<STUDENT_ID_1>), <NAME_2> (<STUDENT_ID_2>), <NAME_3> (<STUDENT_ID_3>)
+ * Date: 2026-11-10
+ */
+
 #include <iostream>
-#include <string>
 #include <vector>
 #include <queue>
-#include <algorithm> 
+#include <algorithm>
 #include <climits>
 
-// helper types
-typedef std::vector<std::vector<int>> mat ;
-typedef std::vector<std::pair<int, int>> coords ;
+typedef std::vector<std::vector<int>> Matrix;
+typedef std::vector<std::pair<int, int>> Coords;
 
-// MST helper function
-int min_key(std::vector<int>& key, std::vector<bool>& mst_set) {  
-	int mn = INT_MAX, min_index = -1 ;
-	for (unsigned int i = 0 ; i < key.size() ; i++) { 
-		if (!mst_set[i] && key[i] < mn) { 
-			mn = key[i] ;
-			min_index = i ;
+// Large value that can still be added to a cost without overflowing an int.
+const int INF_COST = INT_MAX / 2;
+
+// Finds the vertex outside the tree with the smallest key.
+// key: best known connection cost per vertex.
+// inTree: true for vertices already in the tree.
+// Returns the vertex index, or -1 if no reachable vertex is left.
+int minKey(const std::vector<int>& key, const std::vector<bool>& inTree) {
+	int minValue = INT_MAX;
+	int minIndex = -1;
+	for (unsigned int i = 0; i < key.size(); i++) {
+		if (!inTree[i] && key[i] < minValue) {
+			minValue = key[i];
+			minIndex = i;
 		}
 	}
-	return min_index;
+	return minIndex;
 }
 
-// Minimum Spanning Tree (MST) using Prim's Algorithm (Adjacency matrix) 
-/*int mst(unsigned int n, mat& adj_matrix) { 
+// Minimum spanning tree with Prim's algorithm on an adjacency matrix.
+// A weight of 0 means there is no edge. O(n^2).
+// n: number of vertices.
+// adjMatrix: weighted adjacency matrix.
+// edges: output list of the tree arcs (parent, child).
+// Returns the total weight of the tree.
+int mst(unsigned int n, const Matrix& adjMatrix,
+		std::vector<std::pair<int, int>>& edges) {
 	std::vector<int> key(n, INT_MAX);
-	int res = 0 ;
-	// MST is a vector that tracks vertex inclusion
-	std::vector<bool> mst_set(n, false); 
-	
-	key[0] = 0 ;
+	std::vector<int> parent(n, -1);
+	std::vector<bool> inTree(n, false);
+	int total = 0;
+	unsigned int added = 0;
+	int u = 0;
 
-	for (unsigned int c = 0 ; c < n; c++) { 
-		int u = min_key(key, mst_set) ; 
-		mst_set[u] = true ;
-		res += key[u] ;
-		
-		for (int v = 0; v < n ; v++) {
-			if (adj_matrix[u][v] != 0 &&
-			!mst_set[v] && 
-			adj_matrix[u][v] < key[v]) { 
-				key[v] = adj_matrix[u][v] ;
+	key[0] = 0;
+
+	// Stops early if the graph is disconnected (u == -1).
+	while (added < n && u != -1) {
+		u = minKey(key, inTree);
+		if (u != -1) {
+			inTree[u] = true;
+			total += key[u];
+			added++;
+			if (parent[u] != -1) {
+				edges.push_back({parent[u], u});
+			}
+			for (unsigned int v = 0; v < n; v++) {
+				if (adjMatrix[u][v] != 0 && !inTree[v] && adjMatrix[u][v] < key[v]) {
+					key[v] = adjMatrix[u][v];
+					parent[v] = u;
+				}
 			}
 		}
 	}
-
-	return res; 
+	return total;
 }
 
-*/
-// Devuelve el costo total y llena 'edges' con los arcos del MST
-int mst(unsigned int n, mat& adj_matrix,
-        std::vector<std::pair<int,int>>& edges) {
-    std::vector<int> key(n, INT_MAX);
-    std::vector<int> parent(n, -1);          // NUEVO
-    std::vector<bool> mst_set(n, false);
-    int res = 0;
+// Top-down DP with bitmasks: cheapest way to finish the tour from a state.
+// mask: set of visited cities.
+// curr: current city.
+// cost: distance matrix.
+// dp: memo table indexed [curr][mask], -1 when not computed yet.
+// Returns the minimum cost to visit the remaining cities and return to city 0.
+int totalCost(int mask, int curr, const Matrix& cost, Matrix& dp) {
+	int n = cost.size();
+	int answer = INF_COST;
 
-    key[0] = 0;
-
-    for (unsigned int c = 0; c < n; c++) {
-        int u = min_key(key, mst_set);
-        mst_set[u] = true;
-        res += key[u];
-
-        if (parent[u] != -1) {               // NUEVO: guardar el arco
-            edges.push_back({parent[u], u});
-        }
-
-        for (unsigned int v = 0; v < n; v++) {
-            if (adj_matrix[u][v] != 0 &&
-                !mst_set[v] &&
-                adj_matrix[u][v] < key[v]) {
-                key[v] = adj_matrix[u][v];
-                parent[v] = u;               // NUEVO
-            }
-        }
-    }
-    return res;
-}
-
-/*
-// TSP using Top-Down Dynamic Programming with Bitmasking
-int total_cost(int mask, int curr, mat& cost, mat& dp) { 
-	int n = cost.size() ; 
-
-	// base case
-	if (mask == (1 << n) - 1) { 
-		return cost[curr][0];
-	}
-
-	if (dp[curr][mask] != -1) { 
-		return dp[curr][mask]; 
-	}
-
-	int ans = INT_MAX; 
-
-	for (int i = 0 ; i < n ; i++) { 
-		if ((mask & (1 << i)) == 0) { 
-			// unvisited
-			ans = std::min(ans, cost[curr][i] + total_cost(mask | (1 << i), i, cost, dp)); 
+	if (mask == (1 << n) - 1) {
+		answer = cost[curr][0];
+	} else if (dp[curr][mask] != -1) {
+		answer = dp[curr][mask];
+	} else {
+		for (int i = 0; i < n; i++) {
+			if ((mask & (1 << i)) == 0) {
+				int candidate = cost[curr][i] + totalCost(mask | (1 << i), i, cost, dp);
+				answer = std::min(answer, candidate);
+			}
 		}
+		dp[curr][mask] = answer;
 	}
-
-	return dp[curr][mask] = ans ;
+	return answer;
 }
 
-int tsp(mat& cost) {
-	int n = cost.size() ;
-	mat dp(n, std::vector<int>(1 << n, -1)) ;
+// Rebuilds the optimal tour from the filled memo table, without a second table.
+// cost: distance matrix.
+// dp: memo table already filled by totalCost.
+// route: output order of visit, starting and ending at city 0.
+void buildRoute(const Matrix& cost, Matrix& dp, std::vector<int>& route) {
+	int n = cost.size();
+	int curr = 0;
+	int mask = 1;
 
-	int mask = 1, curr = 0; 
-
-	return total_cost(mask, curr, cost, dp); 
-}
-*/
-// TSP con DP + bitmask, guardando la decisión en nxt
-int total_cost(int mask, int curr, mat& cost, mat& dp, mat& nxt) {
-    int n = cost.size();
-
-    if (mask == (1 << n) - 1) {
-        return cost[curr][0];
-    }
-    if (dp[curr][mask] != -1) {
-        return dp[curr][mask];
-    }
-
-    int ans = INT_MAX;
-    for (int i = 0; i < n; i++) {
-        if ((mask & (1 << i)) == 0) {
-            int cand = cost[curr][i] + total_cost(mask | (1 << i), i, cost, dp, nxt);
-            if (cand < ans) {
-                ans = cand;
-                nxt[curr][mask] = i;         // NUEVO: mejor siguiente ciudad
-            }
-        }
-    }
-    return dp[curr][mask] = ans;
+	route.push_back(0);
+	while (mask != (1 << n) - 1) {
+		int target = dp[curr][mask];
+		int next = -1;
+		for (int i = 0; i < n; i++) {
+			if (next == -1 && (mask & (1 << i)) == 0 &&
+				cost[curr][i] + totalCost(mask | (1 << i), i, cost, dp) == target) {
+				next = i;
+			}
+		}
+		route.push_back(next);
+		mask |= 1 << next;
+		curr = next;
+	}
+	route.push_back(0);
 }
 
-// Devuelve el costo y llena 'route' con el orden de visita
-int tsp(mat& cost, std::vector<int>& route) {
-    int n = cost.size();
-    mat dp(n, std::vector<int>(1 << n, -1));
-    mat nxt(n, std::vector<int>(1 << n, -1));
+// Shortest closed route that visits every city exactly once. O(n^2 * 2^n).
+// cost: distance matrix.
+// route: output order of visit.
+// Returns the cost of the route.
+int tsp(const Matrix& cost, std::vector<int>& route) {
+	int n = cost.size();
+	Matrix dp(n, std::vector<int>(1 << n, -1));
 
-    int best = total_cost(1, 0, cost, dp, nxt);
-
-    // Reconstrucción del camino
-    int curr = 0, mask = 1;
-    route.push_back(0);
-    while (mask != (1 << n) - 1) {
-        int i = nxt[curr][mask];
-        route.push_back(i);
-        mask |= (1 << i);
-        curr = i;
-    }
-    route.push_back(0);                      // regresar al origen
-    return best;
+	int best = totalCost(1, 0, cost, dp);
+	buildRoute(cost, dp, route);
+	return best;
 }
 
-// Max Flow using Ford-Fulkerson Algorithm (Edmonds-Karp Implementation)
-bool bfs(mat &rGraph, int src, int sink, std::vector<int> &parent) {
-	int V = rGraph.size();
+// Breadth-first search for an augmenting path (Edmonds-Karp).
+// residual: residual capacity matrix.
+// src: source vertex.
+// sink: target vertex.
+// parent: output predecessor of each vertex on the path found.
+// Returns true if the sink is reachable from the source.
+bool bfs(const Matrix& residual, int src, int sink, std::vector<int>& parent) {
+	int vertices = residual.size();
+	std::vector<bool> visited(vertices, false);
+	std::queue<int> pending;
+	bool found = false;
 
-	std::vector<bool> vis(V, false);
-	std::queue<int> q;
-
-	q.push(src);
-	vis[src] = true;
+	pending.push(src);
+	visited[src] = true;
 	parent[src] = -1;
 
-	while (!q.empty()) {
-		int u = q.front();
-		q.pop();
-
-		for (int v = 0; v < V; v++) {
-			if (!vis[v] && rGraph[u][v] > 0) {
-				vis[v] = true;
+	while (!pending.empty() && !found) {
+		int u = pending.front();
+		pending.pop();
+		for (int v = 0; v < vertices; v++) {
+			if (!visited[v] && residual[u][v] > 0) {
+				visited[v] = true;
 				parent[v] = u;
-
-				if (v == sink) {
-					return true;
-				}
-
-				q.push(v);
+				pending.push(v);
+				found = found || v == sink;
 			}
 		}
 	}
-
-	return false;
+	return found;
 }
 
-// Returns the maximum flow from source (0) to sink (V - 1)
-int max_flow(int V, mat& flow_matrix) {
+// Maximum flow from vertex 0 to vertex vertices - 1 with Ford-Fulkerson using
+// BFS (Edmonds-Karp). O(V * E^2).
+// vertices: number of vertices.
+// flowMatrix: capacity matrix; it is modified into the residual graph.
+// Returns the maximum flow value.
+int maxFlow(int vertices, Matrix& flowMatrix) {
 	int src = 0;
-	int sink = V - 1;
+	int sink = vertices - 1;
+	int totalFlow = 0;
+	std::vector<int> parent(vertices, -1);
 
-	std::vector<int> parent(V);
-	int maxFlow = 0;
-
-	while (bfs(flow_matrix, src, sink, parent)) {
+	while (bfs(flowMatrix, src, sink, parent)) {
 		int pathFlow = INT_MAX;
-
 		for (int v = sink; v != src; v = parent[v]) {
-			int u = parent[v];
-			pathFlow = std::min(pathFlow, flow_matrix[u][v]);
+			pathFlow = std::min(pathFlow, flowMatrix[parent[v]][v]);
 		}
-
 		for (int v = sink; v != src; v = parent[v]) {
-			int u = parent[v];
-			flow_matrix[u][v] -= pathFlow;
-			flow_matrix[v][u] += pathFlow;
+			flowMatrix[parent[v]][v] -= pathFlow;
+			flowMatrix[v][parent[v]] += pathFlow;
 		}
-
-		maxFlow += pathFlow;
+		totalFlow += pathFlow;
 	}
-
-	return maxFlow;
+	return totalFlow;
 }
 
+// Reads a square matrix of size n x n from standard input.
+// n: matrix dimension.
+// Returns the matrix read.
+Matrix readMatrix(int n) {
+	Matrix matrix(n, std::vector<int>(n, 0));
+	for (auto& row : matrix) {
+		for (int& value : row) {
+			std::cin >> value;
+		}
+	}
+	return matrix;
+}
 
-// main function
-int main (int argc, char **argv) { 
-	// read from stdin
-	std::ios::sync_with_stdio(false) ;
-	std::cin.tie(nullptr) ;
+// Reads n points written as "(x,y)" from standard input.
+// n: number of points.
+// Returns the list of coordinates.
+Coords readPoints(int n) {
+	Coords points(n);
+	char separator = ' ';
+	for (auto& [x, y] : points) {
+		std::cin >> separator >> x >> separator >> y >> separator;
+	}
+	return points;
+}
 
-	int n ; 
-	std::cin >> n;
-
-	mat ma(n, std::vector<int>(n)), mb = ma; 
-	for (auto& row : ma) for (int& v : row) std::cin >> v ;
-	for (auto& row : mb) for (int& v : row) std::cin >> v; 
-
-	coords pts(n) ;
-	char c; 
-	for (auto& [x, y] : pts) std::cin >> c >> x >> c >> y >> c ; // '(' x ',' y ')'
-	
-	// 1. Cableado con fibra óptica (MST)
-	std::vector<std::pair<int,int>> edges;
-	mst(n, ma, edges);
-
+// Prints output 1: the fiber wiring arcs, named A, B, C...
+// edges: arcs of the minimum spanning tree.
+void printWiring(const std::vector<std::pair<int, int>>& edges) {
 	std::cout << "1. Cableado:" << std::endl;
-	for (auto& [a, b] : edges) {
+	for (const auto& [a, b] : edges) {
 		std::cout << "(" << char('A' + a) << "," << char('A' + b) << ")" << std::endl;
 	}
 	std::cout << std::endl;
+}
 
-	// 2. Ruta del repartidor (TSP)
-	std::vector<int> route;
-	tsp(ma, route);
-
+// Prints output 2: the delivery route as city letters.
+// route: order of visit, starting and ending at the same city.
+void printRoute(const std::vector<int>& route) {
 	std::cout << "2. Ruta:" << std::endl;
 	for (size_t k = 0; k < route.size(); k++) {
 		std::cout << char('A' + route[k]);
-		if (k + 1 < route.size()) std::cout << " -> ";
+		if (k + 1 < route.size()) {
+			std::cout << " -> ";
+		}
 	}
-	std::cout << std::endl;
-	
-	std::cout << std::endl;
-
-	std::cout << "Maximum flow from 1 to " << n << " in mb: " << max_flow(n, mb) << std::endl;
-
-	return 0 ;
+	std::cout << std::endl << std::endl;
 }
 
+int main() {
+	std::ios::sync_with_stdio(false);
+	std::cin.tie(nullptr);
+
+	int n = 0;
+	std::cin >> n;
+
+	Matrix distanceMatrix = readMatrix(n);
+	Matrix capacityMatrix = readMatrix(n);
+	// Read now so the input is fully consumed; used by part 4 once implemented.
+	Coords exchanges = readPoints(n);
+
+	std::vector<std::pair<int, int>> edges;
+	mst(n, distanceMatrix, edges);
+	printWiring(edges);
+
+	std::vector<int> route;
+	tsp(distanceMatrix, route);
+	printRoute(route);
+
+	std::cout << "3. Flujo maximo:" << std::endl;
+	std::cout << maxFlow(n, capacityMatrix) << std::endl;
+
+	return 0;
+}
